@@ -12,7 +12,8 @@ function doiBadge(id) {
     <div id="modal-${id}" class="ui modal doi-badge-modal"></div>`;
 }
 
-function repositoryItem({ id, name, enabled, doi = false }) {
+// `locked`: managed by another user of the organisation, rendered disabled.
+function repositoryItem({ id, name, enabled, doi = false, locked = false }) {
   return `
     <li class="ui segment">
       <div class="ui grid repository-item">
@@ -22,9 +23,9 @@ function repositoryItem({ id, name, enabled, doi = false }) {
           <i class="icon"></i><p role="alert" class="content"></p>
         </div>
         <div class="ui toggle on-off checkbox">
-          <input type="checkbox" ${
-            enabled ? "checked" : ""
-          } data-repo-id="${id}"
+          <input type="checkbox" ${enabled ? "checked" : ""} ${
+    locked ? "disabled" : ""
+  } data-repo-id="${id}"
             data-checked-aria-label="Disable ${name}" data-unchecked-aria-label="Enable ${name}"
             aria-label="${enabled ? "disable" : "enable"} ${name}" />
           <label></label>
@@ -34,6 +35,9 @@ function repositoryItem({ id, name, enabled, doi = false }) {
 }
 
 function repositoryLists(repositories) {
+  if (repositories.length === 0) {
+    return `<section aria-label="Repositories"><p>You have no repositories on GitHub.</p></section>`;
+  }
   const enabled = repositories.filter((repo) => repo.enabled);
   const disabled = repositories.filter((repo) => !repo.enabled);
   return `
@@ -104,6 +108,7 @@ const addDocumentListener = document.addEventListener.bind(document);
 
 beforeEach(() => {
   global.fetch = jest.fn();
+  jest.spyOn(console, "warn").mockImplementation(() => {});
   jest.spyOn(document, "addEventListener").mockImplementation((...listener) => {
     documentListeners.push(listener);
     addDocumentListener(...listener);
@@ -189,7 +194,11 @@ describe("sync", () => {
   });
 
   it.each([
-    ["an error status", () => Promise.resolve(htmlResponse("", 500))],
+    [
+      "an error status",
+      () =>
+        Promise.resolve(htmlResponse(settingsPage({ repositories: [] }), 500)),
+    ],
     ["a network error", () => Promise.reject(new TypeError("Failed to fetch"))],
   ])(
     "asks for a reload when the page refresh fails with %s",
@@ -239,13 +248,155 @@ describe("sync", () => {
     // Semantic UI moves initialised modals out of the lists, into the page dimmer.
     document.body.appendChild(document.getElementById("modal-2"));
 
-    await clickSync();
     $.fn.modal.mockClear();
-    document.getElementById("modal-2-trigger").click();
+    await clickSync();
 
     expect(listsHtml()).toContain("auser/new-repo");
     expect(document.querySelectorAll("#modal-2")).toHaveLength(1);
+    const init = $.fn.modal.mock.calls.findIndex(
+      ([options]) => typeof options === "object"
+    );
+    const [options] = $.fn.modal.mock.calls[init];
+    const initialised = $.fn.modal.mock.contexts[init];
+    expect(options.selector).toEqual({ close: ".close.button" });
+    expect(initialised[0]).toBe(document.getElementById("modal-2"));
+    options.onShow.call(initialised[0]);
+    expect(
+      document.getElementById("modal-2-trigger").getAttribute("aria-expanded")
+    ).toBe("true");
+
+    const trigger = document.getElementById("modal-2-trigger");
+    $.fn.modal.mockClear();
+    trigger.click();
     expect($.fn.modal).toHaveBeenCalledWith("show");
+    $.fn.modal.mockClear();
+    trigger.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+    );
+    expect($.fn.modal).toHaveBeenCalledWith("show");
+  });
+
+  it("shows the repositories after the first sync", async () => {
+    document.body.innerHTML = settingsPage({ repositories: [] });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(200))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: REPOS }))
+      );
+    loadModule();
+
+    await clickSync();
+
+    expect(listOf(1)).toBe("Repositories");
+    expect(listOf(2)).toBe("Enabled Repositories");
+  });
+
+  it("keeps keyboard focus on the same link across the refresh", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(200))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: REPOS }))
+      );
+    loadModule();
+    const link = '[href="/account/settings/github/repository/auser/repo-1"]';
+    document.querySelector(link).focus();
+
+    await clickSync();
+
+    expect(document.activeElement).toBe(document.querySelector(link));
+  });
+
+  it("sends the CSRF token", async () => {
+    document.cookie = "csrftoken=token-123";
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockResolvedValueOnce(statusResponse(500));
+    loadModule();
+
+    await clickSync();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/user/github/repositories/sync",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRFToken": "token-123" }),
+      })
+    );
+  });
+
+  it("blocks the switches while syncing and restores the button after", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    let respond;
+    global.fetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        respond = resolve;
+      })
+    );
+    loadModule();
+
+    await clickSync();
+    expect(document.getElementById("sync_repos").disabled).toBe(true);
+    expect(document.getElementById("sync_repos_btn_text").textContent).toBe(
+      "Syncing"
+    );
+    expect(toggleOf(1).disabled).toBe(true);
+
+    respond(statusResponse(500));
+    await flushPromises();
+    expect(document.getElementById("sync_repos").disabled).toBe(false);
+    expect(document.getElementById("sync_repos_btn_text").textContent).toBe(
+      "Sync now"
+    );
+    expect(
+      document.getElementById("loader_icon").classList.contains("loading")
+    ).toBe(false);
+    expect(toggleOf(1).disabled).toBe(false);
+  });
+
+  it("reports a sync that cannot be sent", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    loadModule();
+
+    await clickSync();
+
+    expect(syncMessage()).toBe(
+      "There has been a problem: TypeError: Failed to fetch"
+    );
+  });
+
+  it("warns when the sync takes too long", async () => {
+    jest.useFakeTimers();
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockReturnValueOnce(new Promise(() => {}));
+    loadModule();
+
+    document.getElementById("sync_repos").click();
+    await jest.advanceTimersByTimeAsync(100000);
+    jest.useRealTimers();
+
+    expect(syncMessage()).toMatch(/This action seems to take some time/);
+    expect(document.getElementById("sync_repos").disabled).toBe(false);
+  });
+
+  it("reports a successful sync even if the re-render breaks", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(200))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: REPOS }))
+      );
+    const $ = loadModule();
+    $.fn.modal.mockImplementation(() => {
+      throw new Error("modal failed");
+    });
+
+    await clickSync();
+
+    expect(syncMessage()).toMatch(
+      /^Repositories synced successfully\. .*please reload the page/
+    );
+    expect(console.warn).toHaveBeenCalled();
   });
 });
 
@@ -348,8 +499,11 @@ describe("enable/disable", () => {
     );
   });
 
-  it("disables the switch while its request is in flight", async () => {
-    document.body.innerHTML = settingsPage({ repositories: REPOS });
+  it("blocks every switch and Sync while a request is in flight", async () => {
+    const locked = { id: 9, name: "org/shared", enabled: true, locked: true };
+    document.body.innerHTML = settingsPage({
+      repositories: [...REPOS, locked],
+    });
     let respond;
     global.fetch.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -360,10 +514,90 @@ describe("enable/disable", () => {
 
     await flip(1);
     expect(toggleOf(1).disabled).toBe(true);
+    expect(toggleOf(2).disabled).toBe(true);
+    expect(document.getElementById("sync_repos").disabled).toBe(true);
 
     respond(statusResponse(400));
     await flushPromises();
     expect(toggleOf(1).disabled).toBe(false);
+    expect(toggleOf(2).disabled).toBe(false);
+    expect(document.getElementById("sync_repos").disabled).toBe(false);
+    expect(toggleOf(9).disabled).toBe(true);
+  });
+
+  it("sends the CSRF token", async () => {
+    document.cookie = "csrftoken=token-123";
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockResolvedValueOnce(statusResponse(400));
+    loadModule();
+
+    await flip(1);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/user/github/repositories/1/enable",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "X-CSRFToken": "token-123" }),
+      })
+    );
+  });
+
+  it("keeps the switch flipped when only the re-render breaks", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(201))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: withState(1, true) }))
+      );
+    const $ = loadModule();
+    $.fn.modal.mockImplementation(() => {
+      throw new Error("modal failed");
+    });
+
+    await flip(1);
+
+    expect(toggleOf(1).checked).toBe(true);
+    expect(messageOf(1)).toBe(
+      "Repository synced successfully. Please reload the page."
+    );
+  });
+
+  it("does not take focus back from a control the user moved to", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    let respond;
+    global.fetch
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          respond = resolve;
+        })
+      )
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: withState(1, true) }))
+      );
+    loadModule();
+    const link = '[href="/account/settings/github/repository/auser/repo-1"]';
+
+    await flip(1);
+    document.querySelector(link).focus();
+    respond(statusResponse(201));
+    await flushPromises();
+
+    expect(listOf(1)).toBe("Enabled Repositories");
+    expect(document.activeElement).toBe(document.querySelector(link));
+  });
+
+  it("reports the result when the repository is gone after the refresh", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(201))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: [REPOS[1]] }))
+      );
+    loadModule();
+
+    await flip(1);
+
+    expect(toggleOf(1)).toBeNull();
+    expect(syncMessage()).toBe("Repository enabled.");
   });
 
   it("asks for a reload when the page has no refresh markers", async () => {

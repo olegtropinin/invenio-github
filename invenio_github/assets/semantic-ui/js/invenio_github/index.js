@@ -63,11 +63,34 @@ function initDoiBadgeModals(container) {
 }
 
 /**
+ * Replace the content of a container, keeping keyboard focus on the same
+ * control (a switch, a badge or a link) if it was inside.
+ */
+function replaceKeepingFocus(container, html) {
+  const focused = document.activeElement;
+  let selector = null;
+  if (container.contains(focused) && focused !== container) {
+    if (focused.dataset.repoId) {
+      selector = `input[data-repo-id="${focused.dataset.repoId}"]`;
+    } else if (focused.id) {
+      selector = `[id="${focused.id}"]`;
+    } else if (focused.getAttribute("href")) {
+      selector = `[href="${focused.getAttribute("href")}"]`;
+    }
+  }
+  container.innerHTML = html;
+  if (selector) {
+    container.querySelector(selector)?.focus();
+  }
+}
+
+/**
  * Re-render the repository lists and the last sync time from the server.
  *
- * Resolves to false when the page cannot be refreshed in place, e.g. when it
- * was rendered by templates without the refresh ids, or when the session
- * expired. Callers then ask the user to reload the page instead.
+ * Resolves to false, and never throws, when the page cannot be refreshed in
+ * place: when it was rendered by templates without the refresh ids, when the
+ * session expired or when the request failed. Callers then ask the user to
+ * reload the page instead.
  */
 async function refreshRepositoryLists() {
   const lists = document.getElementById(REPOSITORIES_ID);
@@ -75,37 +98,72 @@ async function refreshRepositoryLists() {
     return false;
   }
 
-  let page;
   try {
     const response = await fetch(window.location.href, {
       cache: "no-store",
       credentials: "same-origin",
     });
     if (!response.ok) {
+      console.warn(`Repository lists not refreshed: HTTP ${response.status}`);
       return false;
     }
-    page = new DOMParser().parseFromString(await response.text(), "text/html");
+    const page = new DOMParser().parseFromString(
+      await response.text(),
+      "text/html"
+    );
+    const freshLists = page.getElementById(REPOSITORIES_ID);
+    if (!freshLists) {
+      console.warn("Repository lists not refreshed: no lists in the response");
+      return false;
+    }
+
+    // Initialised modals live in the page dimmer, outside of the lists; remove
+    // them so that their re-rendered copies do not duplicate their ids.
+    $(".doi-badge-modal").remove();
+    replaceKeepingFocus(lists, freshLists.innerHTML);
+    initDoiBadgeModals(lists);
+
+    const lastSync = document.getElementById(LAST_SYNC_ID);
+    const freshLastSync = page.getElementById(LAST_SYNC_ID);
+    if (lastSync && freshLastSync) {
+      lastSync.innerHTML = freshLastSync.innerHTML;
+    }
+    return true;
   } catch (error) {
+    console.warn("Repository lists not refreshed:", error);
     return false;
   }
+}
 
-  const freshLists = page.getElementById(REPOSITORIES_ID);
-  if (!freshLists) {
-    return false;
+const syncButton = document.getElementById("sync_repos");
+
+/**
+ * Allow one sync or enable/disable at a time.
+ *
+ * Each of them re-renders the lists when it completes, which would replace the
+ * switch of another request still in flight and lose its result.
+ */
+function setBusy(busy) {
+  if (syncButton) {
+    syncButton.disabled = busy;
+    syncButton.classList.toggle("disabled", busy);
   }
-
-  // Initialised modals live in the page dimmer, outside of the lists; remove
-  // them so that their re-rendered copies do not duplicate their ids.
-  $(".doi-badge-modal").remove();
-  lists.innerHTML = freshLists.innerHTML;
-  initDoiBadgeModals(lists);
-
-  const lastSync = document.getElementById(LAST_SYNC_ID);
-  const freshLastSync = page.getElementById(LAST_SYNC_ID);
-  if (lastSync && freshLastSync) {
-    lastSync.innerHTML = freshLastSync.innerHTML;
+  if (busy) {
+    // Switches the server rendered as disabled are left alone.
+    document
+      .querySelectorAll(".repository-item input[data-repo-id]:not(:disabled)")
+      .forEach((toggle) => {
+        toggle.disabled = true;
+        toggle.dataset.busy = "true";
+      });
+  } else {
+    document
+      .querySelectorAll(".repository-item input[data-busy]")
+      .forEach((toggle) => {
+        toggle.disabled = false;
+        delete toggle.dataset.busy;
+      });
   }
-  return true;
 }
 
 function fetchWithTimeout(url, options, timeout = 100000) {
@@ -118,7 +176,6 @@ function fetchWithTimeout(url, options, timeout = 100000) {
   ]);
 }
 
-const syncButton = document.getElementById("sync_repos");
 if (syncButton) {
   syncButton.addEventListener("click", function () {
     const resultMessage = document.getElementById("sync-result-message");
@@ -129,6 +186,7 @@ if (syncButton) {
 
     buttonTextElem.innerHTML = loadingText;
     loaderIcon.classList.add("loading");
+    setBusy(true);
 
     syncRepos();
 
@@ -177,6 +235,7 @@ if (syncButton) {
       } finally {
         loaderIcon.classList.remove("loading");
         buttonTextElem.innerHTML = buttonText;
+        setBusy(false);
       }
     }
   });
@@ -204,61 +263,53 @@ async function toggleRepository(toggle) {
   const enable = toggle.checked;
   const action = enable ? "enable" : "disable";
 
-  toggle.disabled = true;
+  setBusy(true);
+  let failure = null;
   try {
     const response = await fetch(
       `/api/user/github/repositories/${repoId}/${action}`,
       { method: "POST", headers: REQUEST_HEADERS }
     );
     if (!response.ok) {
-      revertToggle(toggle);
-      showSwitchResult(
-        toggle,
-        "negative",
-        "cancel",
-        `Request failed with status code: ${response.status}`,
-        5000
-      );
-      return;
-    }
-
-    if (!(await refreshRepositoryLists())) {
-      showSwitchResult(
-        toggle,
-        "positive",
-        "checkmark",
-        "Repository synced successfully. Please reload the page.",
-        10000
-      );
-      return;
-    }
-
-    // The repository now sits in the other list: keep the user's place on it.
-    const movedToggle = document.querySelector(
-      `#${REPOSITORIES_ID} input[data-repo-id="${repoId}"]`
-    );
-    if (movedToggle) {
-      movedToggle.focus();
-      showSwitchResult(
-        movedToggle,
-        "positive",
-        "checkmark",
-        enable ? "Repository enabled." : "Repository disabled.",
-        10000
-      );
+      failure = `Request failed with status code: ${response.status}`;
     }
   } catch (error) {
-    revertToggle(toggle);
-    showSwitchResult(
-      toggle,
-      "negative",
-      "cancel",
-      `There has been a problem: ${error}`,
-      7000
-    );
-  } finally {
-    toggle.disabled = false;
+    failure = `There has been a problem: ${error}`;
   }
+
+  // Only a successful request changed the server state worth re-rendering.
+  const refreshed = !failure && (await refreshRepositoryLists());
+  setBusy(false);
+
+  let result;
+  if (failure) {
+    revertToggle(toggle);
+    result = ["negative", "cancel", failure, 7000];
+  } else if (refreshed) {
+    const text = enable ? "Repository enabled." : "Repository disabled.";
+    result = ["positive", "checkmark", text, 10000];
+  } else {
+    const text = "Repository synced successfully. Please reload the page.";
+    result = ["positive", "checkmark", text, 10000];
+  }
+
+  // Look the switch up again: a refresh replaces it, in its new list.
+  const current = document.querySelector(
+    `.repository-item input[data-repo-id="${repoId}"]`
+  );
+  if (!current) {
+    // Gone from the refreshed lists, e.g. deleted on GitHub meanwhile.
+    const resultMessage = document.getElementById("sync-result-message");
+    addResultMessage(resultMessage, ...result.slice(0, 3));
+    hideAfter(resultMessage, result[3]);
+    return;
+  }
+  // Keep the user's place on the repository, unless they moved on meanwhile.
+  const focused = document.activeElement;
+  if (!focused || focused === document.body || focused === current) {
+    current.focus();
+  }
+  showSwitchResult(current, ...result);
 }
 
 // Delegated, so that switches keep working after the lists are re-rendered.
