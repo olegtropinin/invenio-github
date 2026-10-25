@@ -1,0 +1,82 @@
+[
+  {
+    "ac": "AC1",
+    "ok": true,
+    "detail": "after Sync without reload: [\"auser/astro-pipeline\",\"auser/climate-model-v2\",\"auser/new-tool\"]"
+  },
+  {
+    "ac": "AC2",
+    "ok": true,
+    "detail": "message: \"Repositories synced successfully.\""
+  },
+  {
+    "ac": "AC1b",
+    "ok": true,
+    "detail": "lists and last sync equal to a reload (before \"(updated just now)\", after \"(updated just now)\")"
+  },
+  {
+    "ac": "AC3",
+    "ok": true,
+    "detail": "enabled list: [\"auser/astro-pipeline\",\"auser/beam-analysis\",\"auser/data-cleaner\",\"auser/zenodo-demo\"], item classes \"left-border m-0 no-border-radius positive segment ui\""
+  },
+  {
+    "ac": "AC5",
+    "ok": true,
+    "detail": "focus on repo 101, message \"Repository enabled.\""
+  },
+  {
+    "ac": "AC4",
+    "ok": true,
+    "detail": "repositories list: [\"auser/astro-pipeline\",\"auser/climate-model-v2\",\"auser/new-tool\"], message \"Repository disabled.\""
+  },
+  {
+    "ac": "AC5b",
+    "ok": true,
+    "detail": "keyboard toggle: focus on repo 105, zenodo-demo in Repositories"
+  },
+  {
+    "ac": "AC8",
+    "ok": true,
+    "detail": "after disabling beam-analysis, live lists === reloaded lists (enabled: [\"auser/data-cleaner\"])"
+  },
+  {
+    "ac": "AC6",
+    "ok": true,
+    "detail": "message \"Request failed with status code: 400\", switch checked=false, still in Repositories=true"
+  },
+  {
+    "ac": "AC9",
+    "ok": true,
+    "detail": "message \"Request failed with status code: 400\", lists unchanged"
+  },
+  {
+    "ac": "AC7",
+    "ok": true,
+    "detail": "during request: this switch disabled=true, other switches + Sync blocked=true; after: switch disabled=false, others free=true"
+  },
+  {
+    "ac": "AC11",
+    "ok": true,
+    "detail": "data-cleaner switch disabled=true, tooltip \"This repository is managed by another user of your GitHub organization.\""
+  },
+  {
+    "ac": "AC8b",
+    "ok": true,
+    "detail": "final live lists === reloaded lists"
+  },
+  {
+    "ac": "errors(5055)",
+    "ok": true,
+    "detail": "unexpected: none; deliberate: HTTP 400 POST /api/user/github/repositories/103/enable | HTTP 400 POST /api/user/github/repositories/sync"
+  },
+  {
+    "ac": "AC12 new JS + old templates (frontend first)",
+    "ok": true,
+    "detail": "sync: \"Repositories synced successfully. Some items may still be updating, please reload the page in about a minute.\" · toggle: \"Repository synced successfully. Please reload the page.\" · stays in place until reload=true · server state correct after reload · JS errors/HTTP>=400: HTTP 404 GET /static/images/invenio-white.svg | HTTP 404 GET /static/images/invenio-white.svg"
+  },
+  {
+    "ac": "AC12 old JS + new templates (cached bundle)",
+    "ok": true,
+    "detail": "sync: \"Repositories synced successfully. Some items may still be updating, please reload the page in about a minute.\" · toggle: \"Repository synced successfully. Please reload the page.\" · stays in place until reload=true · server state correct after reload · JS errors/HTTP>=400: HTTP 404 GET /static/images/invenio-white.svg | HTTP 404 GET /static/images/invenio-white.svg"
+  }
+]
