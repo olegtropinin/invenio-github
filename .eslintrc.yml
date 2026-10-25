@@ -6,6 +6,3 @@ extends:
   - '@inveniosoftware/eslint-config-invenio/prettier'
 
 parser: '@babel/eslint-parser'
-
-env:
-  jest: true
