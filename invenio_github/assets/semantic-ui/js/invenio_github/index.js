@@ -19,10 +19,10 @@ function getCookie(cname) {
   let ca = decodedCookie.split(";");
   for (let i = 0; i < ca.length; i++) {
     let c = ca[i];
-    while (c.charAt(0) == " ") {
+    while (c.charAt(0) === " ") {
       c = c.substring(1);
     }
-    if (c.indexOf(name) == 0) {
+    if (c.indexOf(name) === 0) {
       return c.substring(name.length, c.length);
     }
   }
@@ -34,14 +34,14 @@ const REQUEST_HEADERS = {
   "X-CSRFToken": getCookie("csrftoken"),
 };
 
-const sync_button = document.getElementById("sync_repos");
-if (sync_button) {
-  sync_button.addEventListener("click", function () {
+const syncButton = document.getElementById("sync_repos");
+if (syncButton) {
+  syncButton.addEventListener("click", function () {
     const resultMessage = document.getElementById("sync-result-message");
     const loaderIcon = document.getElementById("loader_icon");
     const buttonTextElem = document.getElementById("sync_repos_btn_text");
     const buttonText = buttonTextElem.innerHTML;
-    const loadingText = sync_button.dataset.loadingText;
+    const loadingText = syncButton.dataset.loadingText;
 
     const url = "/api/user/github/repositories/sync";
     const request = new Request(url, {
@@ -57,8 +57,8 @@ if (sync_button) {
       return Promise.race([
         fetch(url, options),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), timeout)
-        )
+          setTimeout(() => reject(new Error("timeout")), timeout)
+        ),
       ]);
     }
 
@@ -68,7 +68,7 @@ if (sync_button) {
       try {
         const response = await fetchWithTimeout(request);
         loaderIcon.classList.remove("loading");
-        sync_button.classList.add("disabled");
+        syncButton.classList.add("disabled");
         buttonTextElem.innerHTML = buttonText;
         if (response.ok) {
           addResultMessage(
@@ -77,7 +77,7 @@ if (sync_button) {
             "checkmark",
             "Repositories synced successfully. Some items may still be updating, please reload the page in about a minute."
           );
-          sync_button.classList.remove("disabled");
+          syncButton.classList.remove("disabled");
           setTimeout(function () {
             resultMessage.classList.add("hidden");
           }, 10000);
@@ -91,7 +91,7 @@ if (sync_button) {
           setTimeout(function () {
             resultMessage.classList.add("hidden");
           }, 10000);
-          sync_button.classList.remove("disabled");
+          syncButton.classList.remove("disabled");
         }
       } catch (error) {
         loaderIcon.classList.remove("loading");
@@ -102,8 +102,7 @@ if (sync_button) {
             "hourglass",
             "This action seems to take some time, refresh the page after several minutes to inspect the synchronisation."
           );
-        }
-        else {
+        } else {
           addResultMessage(
             resultMessage,
             "negative",
@@ -129,17 +128,17 @@ if (repositories) {
 }
 
 function sendEnableDisableRequest(checked, repo) {
-  const repo_id = repo
+  const repoId = repo
     .querySelector("input[data-repo-id]")
     .getAttribute("data-repo-id");
   const switchMessage = repo.querySelector(".repo-switch-message");
 
   let url;
   if (checked === true) {
-    url = "/api/user/github/repositories/" + repo_id + "/enable";
+    url = "/api/user/github/repositories/" + repoId + "/enable";
   } else {
     if (checked === false) {
-      url = "/api/user/github/repositories/" + repo_id + "/disable";
+      url = "/api/user/github/repositories/" + repoId + "/disable";
     }
   }
 
