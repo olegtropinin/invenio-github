@@ -182,59 +182,91 @@ if (syncButton) {
   });
 }
 
-const repositories = document.getElementsByClassName("repository-item");
-if (repositories) {
-  for (const repo of repositories) {
-    repo.addEventListener("change", function (event) {
-      sendEnableDisableRequest(event.target.checked, repo);
-    });
-  }
+function switchMessageOf(toggle) {
+  return toggle
+    .closest(".repository-item")
+    .querySelector(".repo-switch-message");
 }
 
-function sendEnableDisableRequest(checked, repo) {
-  const repoId = repo
-    .querySelector("input[data-repo-id]")
-    .getAttribute("data-repo-id");
-  const switchMessage = repo.querySelector(".repo-switch-message");
-  const action = checked ? "enable" : "disable";
-  const url = `/api/user/github/repositories/${repoId}/${action}`;
+function showSwitchResult(toggle, color, icon, message, delay) {
+  const switchMessage = switchMessageOf(toggle);
+  addResultMessage(switchMessage, color, icon, message);
+  hideAfter(switchMessage, delay);
+}
 
-  sendRequest();
+function revertToggle(toggle) {
+  toggle.checked = !toggle.checked;
+  updateToggleAriaLabel(toggle);
+}
 
-  async function sendRequest() {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: REQUEST_HEADERS,
-      });
-      if (response.ok) {
-        addResultMessage(
-          switchMessage,
-          "positive",
-          "checkmark",
-          "Repository synced successfully. Please reload the page."
-        );
-        hideAfter(switchMessage, 10000);
-      } else {
-        addResultMessage(
-          switchMessage,
-          "negative",
-          "cancel",
-          `Request failed with status code: ${response.status}`
-        );
-        hideAfter(switchMessage, 5000);
-      }
-    } catch (error) {
-      addResultMessage(
-        switchMessage,
+async function toggleRepository(toggle) {
+  const repoId = toggle.dataset.repoId;
+  const enable = toggle.checked;
+  const action = enable ? "enable" : "disable";
+
+  toggle.disabled = true;
+  try {
+    const response = await fetch(
+      `/api/user/github/repositories/${repoId}/${action}`,
+      { method: "POST", headers: REQUEST_HEADERS }
+    );
+    if (!response.ok) {
+      revertToggle(toggle);
+      showSwitchResult(
+        toggle,
         "negative",
         "cancel",
-        `There has been a problem: ${error}`
+        `Request failed with status code: ${response.status}`,
+        5000
       );
-      hideAfter(switchMessage, 7000);
+      return;
     }
+
+    if (!(await refreshRepositoryLists())) {
+      showSwitchResult(
+        toggle,
+        "positive",
+        "checkmark",
+        "Repository synced successfully. Please reload the page.",
+        10000
+      );
+      return;
+    }
+
+    // The repository now sits in the other list: keep the user's place on it.
+    const movedToggle = document.querySelector(
+      `#${REPOSITORIES_ID} input[data-repo-id="${repoId}"]`
+    );
+    if (movedToggle) {
+      movedToggle.focus();
+      showSwitchResult(
+        movedToggle,
+        "positive",
+        "checkmark",
+        enable ? "Repository enabled." : "Repository disabled.",
+        10000
+      );
+    }
+  } catch (error) {
+    revertToggle(toggle);
+    showSwitchResult(
+      toggle,
+      "negative",
+      "cancel",
+      `There has been a problem: ${error}`,
+      7000
+    );
+  } finally {
+    toggle.disabled = false;
   }
 }
+
+// Delegated, so that switches keep working after the lists are re-rendered.
+document.addEventListener("change", function (event) {
+  if (event.target.matches(".repository-item input[data-repo-id]")) {
+    toggleRepository(event.target);
+  }
+});
 
 // DOI badge modal
 initDoiBadgeModals(document);

@@ -97,8 +97,25 @@ const REPOS = [
   { id: 2, name: "auser/repo-1", enabled: true },
 ];
 
+// Every test loads the module again; drop the delegated listeners the previous
+// copy left on the shared document.
+let documentListeners = [];
+const addDocumentListener = document.addEventListener.bind(document);
+
 beforeEach(() => {
   global.fetch = jest.fn();
+  jest.spyOn(document, "addEventListener").mockImplementation((...listener) => {
+    documentListeners.push(listener);
+    addDocumentListener(...listener);
+  });
+});
+
+afterEach(() => {
+  documentListeners.forEach((listener) =>
+    document.removeEventListener(...listener)
+  );
+  documentListeners = [];
+  jest.restoreAllMocks();
 });
 
 function syncMessage() {
@@ -229,5 +246,164 @@ describe("sync", () => {
     expect(listsHtml()).toContain("auser/new-repo");
     expect(document.querySelectorAll("#modal-2")).toHaveLength(1);
     expect($.fn.modal).toHaveBeenCalledWith("show");
+  });
+});
+
+function toggleOf(repoId) {
+  return document.querySelector(`input[data-repo-id="${repoId}"]`);
+}
+
+function listOf(repoId) {
+  return toggleOf(repoId).closest("section").getAttribute("aria-label");
+}
+
+function messageOf(repoId) {
+  return toggleOf(repoId)
+    .closest(".repository-item")
+    .querySelector(".repo-switch-message .content").textContent;
+}
+
+async function flip(repoId) {
+  const toggle = toggleOf(repoId);
+  toggle.checked = !toggle.checked;
+  toggle.dispatchEvent(new Event("change", { bubbles: true }));
+  await flushPromises();
+}
+
+function withState(repoId, enabled) {
+  return REPOS.map((repo) =>
+    repo.id === repoId ? { ...repo, enabled } : repo
+  );
+}
+
+describe("enable/disable", () => {
+  it("moves an enabled repository to the enabled list", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(201))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: withState(1, true) }))
+      );
+    loadModule();
+
+    await flip(1);
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/user/github/repositories/1/enable",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(listOf(1)).toBe("Enabled Repositories");
+    expect(toggleOf(1).checked).toBe(true);
+    expect(document.activeElement).toBe(toggleOf(1));
+    expect(messageOf(1)).toBe("Repository enabled.");
+  });
+
+  it("moves a disabled repository back to the repositories list", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(204))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: withState(2, false) }))
+      );
+    loadModule();
+
+    await flip(2);
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      "/api/user/github/repositories/2/disable",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(listOf(2)).toBe("Repositories");
+    expect(document.activeElement).toBe(toggleOf(2));
+    expect(messageOf(2)).toBe("Repository disabled.");
+  });
+
+  it("reverts the switch when the request is refused", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockResolvedValueOnce(statusResponse(400));
+    loadModule();
+
+    await flip(1);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(listOf(1)).toBe("Repositories");
+    expect(toggleOf(1).checked).toBe(false);
+    expect(toggleOf(1).getAttribute("aria-label")).toBe("Enable auser/arepo");
+    expect(messageOf(1)).toBe("Request failed with status code: 400");
+  });
+
+  it("reverts the switch when the request cannot be sent", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    loadModule();
+
+    await flip(2);
+
+    expect(toggleOf(2).checked).toBe(true);
+    expect(toggleOf(2).getAttribute("aria-label")).toBe("Disable auser/repo-1");
+    expect(messageOf(2)).toBe(
+      "There has been a problem: TypeError: Failed to fetch"
+    );
+  });
+
+  it("disables the switch while its request is in flight", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    let respond;
+    global.fetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        respond = resolve;
+      })
+    );
+    loadModule();
+
+    await flip(1);
+    expect(toggleOf(1).disabled).toBe(true);
+
+    respond(statusResponse(400));
+    await flushPromises();
+    expect(toggleOf(1).disabled).toBe(false);
+  });
+
+  it("asks for a reload when the page has no refresh markers", async () => {
+    document.body.innerHTML = settingsPage({
+      repositories: REPOS,
+      markers: false,
+    });
+    global.fetch.mockResolvedValueOnce(statusResponse(201));
+    loadModule();
+
+    await flip(1);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(toggleOf(1).checked).toBe(true);
+    expect(messageOf(1)).toBe(
+      "Repository synced successfully. Please reload the page."
+    );
+  });
+
+  it("keeps switches working after the lists are re-rendered", async () => {
+    document.body.innerHTML = settingsPage({ repositories: REPOS });
+    global.fetch
+      .mockResolvedValueOnce(statusResponse(201))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: withState(1, true) }))
+      )
+      .mockResolvedValueOnce(statusResponse(204))
+      .mockResolvedValueOnce(
+        htmlResponse(settingsPage({ repositories: REPOS }))
+      );
+    loadModule();
+
+    await flip(1);
+    await flip(1);
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
+      "/api/user/github/repositories/1/disable",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(listOf(1)).toBe("Repositories");
   });
 });
